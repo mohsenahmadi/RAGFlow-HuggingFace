@@ -1,7 +1,7 @@
 import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, JSONLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import AstraDBVectorStore
+from langchain_astradb import AstraDBVectorStore  # Updated import
 from langchain.embeddings import HuggingFaceHubEmbeddings
 import os
 import tempfile
@@ -20,23 +20,37 @@ except KeyError as e:
     st.error(f"Missing secret key: {e}")
     st.stop()
 
+# Debug: Print secrets to verify (remove in production)
+st.write("Secrets loaded:", {
+    "ASTRA_DB_API_ENDPOINT": ASTRA_DB_API_ENDPOINT,
+    "ASTRA_DB_APPLICATION_TOKEN": "****" if ASTRA_DB_APPLICATION_TOKEN else None,
+    "ASTRA_DB_NAMESPACE": ASTRA_DB_NAMESPACE,
+    "HUGGINGFACEHUB_API_TOKEN": "****" if HUGGINGFACEHUB_API_TOKEN else None
+})
+
+# App title
 st.title("DocVectorizer for RAG with Hugging Face Embeddings")
 
+# Input for use case to dynamically set collection name
 use_case = st.text_input("Enter use case (e.g., technical, marketing)", value="default")
 collection_name = f"rag_{use_case.lower().replace(' ', '_')}"
 
+# File uploader for multiple document types
 supported_formats = ["pdf", "md", "txt", "json"]
 uploaded_files = st.file_uploader(f"Upload Documents ({', '.join(supported_formats)})", 
                                  type=supported_formats, 
                                  accept_multiple_files=True)
 
+# Text splitter settings
 chunk_size = st.number_input("Chunk Size", min_value=100, max_value=2000, value=750, step=50)
 chunk_overlap = st.number_input("Chunk Overlap", min_value=0, max_value=500, value=150, step=10)
 
+# Helper function to generate a hash for a document
 def get_document_hash(content, filename):
     combined = f"{content}{filename}"
     return hashlib.md5(combined.encode()).hexdigest()
 
+# Helper function to check if a document already exists
 def document_exists(doc_hash, vectorstore):
     try:
         results = vectorstore.similarity_search(
@@ -48,6 +62,7 @@ def document_exists(doc_hash, vectorstore):
     except Exception:
         return False
 
+# Helper function to load and process different file types
 def load_document(file_path, file_name, file_type):
     docs = []
     try:
@@ -91,18 +106,27 @@ def load_document(file_path, file_name, file_type):
         return []
 
 if uploaded_files:
+    # Initialize embeddings
     try:
         embeddings = HuggingFaceHubEmbeddings(
             model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             huggingfacehub_api_token=HUGGINGFACEHUB_API_TOKEN
         )
-        sample_embedding = embeddings.embed_query("Sample test sentence.")
-        EMBEDDING_DIMENSION = len(sample_embedding)
-        st.info(f"Hugging Face embedding model loaded with dimension: {EMBEDDING_DIMENSION}")
+        sample_text = "This is a test document to check embedding dimensions."
+        sample_embedding = embeddings.embed_query(sample_text)
+        actual_dimension = len(sample_embedding)
+        st.info(f"Embedding model dimension: {actual_dimension}")
+        
+        # Define expected dimension (based on model)
+        EMBEDDING_DIMENSION = 384  # Known dimension for paraphrase-multilingual-MiniLM-L12-v2
+        if actual_dimension != EMBEDDING_DIMENSION:
+            st.warning(f"Warning: Embedding dimension ({actual_dimension}) does not match expected dimension ({EMBEDDING_DIMENSION})")
+    
     except Exception as e:
         st.error(f"Failed to initialize HuggingFaceHubEmbeddings: {str(e)}")
         st.stop()
-
+    
+    # Create or access vector store
     try:
         vectorstore = AstraDBVectorStore(
             collection_name=collection_name,
@@ -114,17 +138,17 @@ if uploaded_files:
     except Exception as e:
         st.error(f"Failed to initialize AstraDBVectorStore: {str(e)}")
         st.stop()
-
+    
     documents = []
     skipped_docs = 0
     processed_docs = 0
-
+    
     with st.spinner("Processing documents..."):
         for file in uploaded_files:
             with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.name}") as tmp_file:
                 tmp_file.write(file.getvalue())
                 tmp_file_path = tmp_file.name
-
+            
             file_type = mimetypes.guess_type(file.name)[0]
             if not file_type:
                 ext = os.path.splitext(file.name)[1].lower()
@@ -136,7 +160,7 @@ if uploaded_files:
                     file_type = 'text/plain'
                 elif ext == '.pdf':
                     file_type = 'application/pdf'
-
+            
             with open(tmp_file_path, 'r', errors='ignore') as f:
                 try:
                     content = f.read()
@@ -147,7 +171,7 @@ if uploaded_files:
                         continue
                 except Exception as e:
                     st.warning(f"Could not check duplication for {file.name}: {str(e)}")
-
+            
             try:
                 docs = load_document(tmp_file_path, file.name, file_type)
                 if docs:
@@ -158,37 +182,37 @@ if uploaded_files:
                     os.unlink(tmp_file_path)
                 except:
                     pass
-
+    
     st.write(f"Documents processed: {processed_docs}, Duplicates skipped: {skipped_docs}")
-
+    
     if documents:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         chunks = text_splitter.split_documents(documents)
-
+        
         try:
             batch_size = 10
             total_chunks = len(chunks)
             progress_bar = st.progress(0)
             status_text = st.empty()
-
+            
             for i in range(0, total_chunks, batch_size):
                 end_idx = min(i + batch_size, total_chunks)
                 current_batch = chunks[i:end_idx]
-
+                
                 filtered_batch = []
                 for doc in current_batch:
                     if not document_exists(doc.metadata.get("doc_hash", ""), vectorstore):
                         filtered_batch.append(doc)
-
+                
                 if filtered_batch:
                     vectorstore.add_documents(filtered_batch)
-
+                
                 progress = (end_idx / total_chunks)
                 progress_bar.progress(progress)
                 status_text.text(f"Processing batch {i//batch_size + 1}/{(total_chunks-1)//batch_size + 1} ({end_idx}/{total_chunks} chunks)")
-
+            
             st.success(f"Documents successfully vectorized and stored in collection {collection_name}")
-
+            
         except Exception as e:
             st.error(f"Failed to store documents in AstraDB: {str(e)}")
             import traceback
