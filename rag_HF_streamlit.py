@@ -1,7 +1,7 @@
 import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, JSONLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_astradb import AstraDBVectorStore  # Updated import
+from langchain_astradb import AstraDBVectorStore  # Fixed import
 from langchain.embeddings import HuggingFaceHubEmbeddings
 import os
 import tempfile
@@ -117,8 +117,8 @@ if uploaded_files:
         actual_dimension = len(sample_embedding)
         st.info(f"Embedding model dimension: {actual_dimension}")
         
-        # Define expected dimension (based on model)
-        EMBEDDING_DIMENSION = 384  # Known dimension for paraphrase-multilingual-MiniLM-L12-v2
+        # Define expected dimension
+        EMBEDDING_DIMENSION = 384  # Known for paraphrase-multilingual-MiniLM-L12-v2
         if actual_dimension != EMBEDDING_DIMENSION:
             st.warning(f"Warning: Embedding dimension ({actual_dimension}) does not match expected dimension ({EMBEDDING_DIMENSION})")
     

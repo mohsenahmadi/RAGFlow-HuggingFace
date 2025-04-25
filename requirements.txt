@@ -4,7 +4,7 @@ langchain-astradb
 langchain-community
 pypdf
 markdown2
-transformers1
+transformers
 torch
 python-dotenv
-huggingface_hub  # Explicitly include for HuggingFaceHubEmbeddings
+huggingface_hub
