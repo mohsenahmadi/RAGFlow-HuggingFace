@@ -1,0 +1,9 @@
+streamlit
+langchain
+langchain-astradb
+langchain-community
+pypdf
+markdown2
+transformers
+torch
+python-dotenv
