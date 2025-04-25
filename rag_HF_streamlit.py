@@ -41,7 +41,7 @@ collection_name = f"rag_{use_case.lower().replace(' ', '_')}"
 supported_formats = ["pdf", "md", "txt", "json"]
 uploaded_files = st.file_uploader(f"Upload Documents ({', '.join(supported_formats)})", 
                                  type=supported_formats, 
-                                asterisk.accept_multiple_files=True)
+                                 accept_multiple_files=True)  # Fixed syntax error
 
 # Text splitter settings
 chunk_size = st.number_input("Chunk Size", min_value=100, max_value=2000, value=750, step=50)
