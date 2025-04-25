@@ -1,14 +1,16 @@
 import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, JSONLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_astradb import AstraDBVectorStore  # Fixed import
-from langchain.embeddings import HuggingFaceHubEmbeddings
+from langchain_astradb import AstraDBVectorStore
+from langchain_community.embeddings import HuggingFaceHubEmbeddings
 import os
 import tempfile
 import hashlib
 from datetime import datetime
 import json
 import mimetypes
+import time
+from requests.exceptions import HTTPError
 
 # Load secrets
 try:
@@ -39,7 +41,7 @@ collection_name = f"rag_{use_case.lower().replace(' ', '_')}"
 supported_formats = ["pdf", "md", "txt", "json"]
 uploaded_files = st.file_uploader(f"Upload Documents ({', '.join(supported_formats)})", 
                                  type=supported_formats, 
-                                 accept_multiple_files=True)
+                                asterisk.accept_multiple_files=True)
 
 # Text splitter settings
 chunk_size = st.number_input("Chunk Size", min_value=100, max_value=2000, value=750, step=50)
@@ -106,12 +108,32 @@ def load_document(file_path, file_name, file_type):
         return []
 
 if uploaded_files:
-    # Initialize embeddings
+    # Initialize embeddings with retry logic
     try:
-        embeddings = HuggingFaceHubEmbeddings(
-            model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            huggingfacehub_api_token=HUGGINGFACEHUB_API_TOKEN
-        )
+        def initialize_embeddings_with_retry(max_retries=3, delay=5):
+            for attempt in range(max_retries):
+                try:
+                    embeddings = HuggingFaceHubEmbeddings(
+                        model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                        huggingfacehub_api_token=HUGGINGFACEHUB_API_TOKEN,
+                        endpoint_url="https://api-inference.huggingface.co/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                        task="feature-extraction"
+                    )
+                    return embeddings
+                except HTTPError as e:
+                    error_code = e.response.status_code if e.response else None
+                    if error_code == 503 and attempt < max_retries - 1:
+                        st.warning(f"503 error on attempt {attempt + 1}, retrying in {delay} seconds...")
+                        time.sleep(delay)
+                    elif error_code == 401:
+                        raise Exception("Invalid or unauthorized HUGGINGFACEHUB_API_TOKEN. Please check your token.")
+                    elif error_code == 429:
+                        raise Exception("Rate limit exceeded for Hugging Face Inference API.")
+                    else:
+                        raise e
+            raise Exception("Max retries reached for initializing embeddings")
+
+        embeddings = initialize_embeddings_with_retry()
         sample_text = "This is a test document to check embedding dimensions."
         sample_embedding = embeddings.embed_query(sample_text)
         actual_dimension = len(sample_embedding)
