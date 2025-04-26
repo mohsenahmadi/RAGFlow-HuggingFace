@@ -56,16 +56,18 @@ def get_document_hash(content, filename):
 # Helper function to check if a document already exists
 def document_exists(doc_hash, vectorstore):
     try:
-        # Use the internal _astra_db_collection to check for existence of doc_hash in metadata
-        results = vectorstore._astra_db_collection.find(
-            {"metadata.doc_hash": doc_hash},
-            limit=1
+        # Search for the document using similarity search with metadata filter
+        results = vectorstore.similarity_search(
+            query="",  # Empty query
+            k=1,  # Only need one result
+            filter={"doc_hash": doc_hash}  # Filter by doc_hash
         )
-        exists = len(list(results)) > 0
+        exists = len(results) > 0
         st.write(f"Checking duplicate for doc_hash {doc_hash}: {'Exists' if exists else 'Not found'}")
         return exists
     except Exception as e:
         st.warning(f"Error checking duplicate for doc_hash {doc_hash}: {str(e)}")
+        # Continue with insertion if we can't verify
         return False
 
 # Helper function to load and process different file types
@@ -190,10 +192,16 @@ if uploaded_files:
                 try:
                     content = f.read()
                     doc_hash = get_document_hash(content, file.name)
-                    if document_exists(doc_hash, vectorstore):
-                        st.info(f"Skipping duplicate document: {file.name}")
-                        skipped_docs += 1
-                        continue
+                    
+                    # Initialize empty vector store first to skip this check on first document
+                    if processed_docs > 0:
+                        try:
+                            if document_exists(doc_hash, vectorstore):
+                                st.info(f"Skipping duplicate document: {file.name}")
+                                skipped_docs += 1
+                                continue
+                        except Exception as e:
+                            st.warning(f"Error in duplicate check for {file.name}: {str(e)}")
                 except Exception as e:
                     st.warning(f"Could not check duplication for {file.name}: {str(e)}")
             
@@ -225,25 +233,24 @@ if uploaded_files:
                 end_idx = min(i + batch_size, total_chunks)
                 current_batch = chunks[i:end_idx]
                 
-                filtered_batch = []
-                for doc in current_batch:
-                    doc_hash = doc.metadata.get("doc_hash", "")
-                    if not document_exists(doc_hash, vectorstore):
-                        filtered_batch.append(doc)
-                    else:
-                        st.info(f"Chunk with doc_hash {doc_hash} already exists, skipping...")
-                
-                if filtered_batch:
-                    vectorstore.add_documents(filtered_batch)
-                    st.write(f"Stored {len(filtered_batch)} chunks in batch {i//batch_size + 1}")
+                # We don't need to check chunks for duplicates if we've already filtered documents
+                vectorstore.add_documents(current_batch)
+                st.write(f"Stored {len(current_batch)} chunks in batch {i//batch_size + 1}")
                 
                 progress = (end_idx / total_chunks)
                 progress_bar.progress(progress)
                 status_text.text(f"Processing batch {i//batch_size + 1}/{(total_chunks-1)//batch_size + 1} ({end_idx}/{total_chunks} chunks)")
             
-            # Verify the number of records in the database using _astra_db_collection
-            total_records = vectorstore._astra_db_collection.count_documents({})
-            st.success(f"Documents successfully vectorized and stored in collection {collection_name}. Total records in DB: {total_records}")
+            # Try to count documents if this method is available (using AstraDB client directly)
+            try:
+                if hasattr(vectorstore, "client") and hasattr(vectorstore.client, "count_documents"):
+                    total_records = vectorstore.client.count_documents(collection_name=collection_name)
+                    st.success(f"Documents successfully vectorized and stored in collection {collection_name}. Total records in DB: {total_records}")
+                else:
+                    st.success(f"Documents successfully vectorized and stored in collection {collection_name}.")
+            except Exception as e:
+                st.success(f"Documents successfully vectorized and stored in collection {collection_name}.")
+                st.info(f"Count error (non-critical): {str(e)}")
             
         except Exception as e:
             st.error(f"Failed to store documents in AstraDB: {str(e)}")
