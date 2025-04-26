@@ -2,9 +2,7 @@ streamlit
 langchain
 langchain-astradb
 langchain-community
+langchain-openai
 pypdf
 markdown2
-transformers
-torch
 python-dotenv
-huggingface_hub

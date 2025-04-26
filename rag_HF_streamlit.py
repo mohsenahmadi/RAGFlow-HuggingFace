@@ -2,7 +2,7 @@ import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, JSONLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_astradb import AstraDBVectorStore
-from langchain_community.embeddings import HuggingFaceHubEmbeddings
+from langchain_openai import OpenAIEmbeddings
 import os
 import tempfile
 import hashlib
@@ -17,7 +17,7 @@ try:
     ASTRA_DB_API_ENDPOINT = st.secrets["ASTRA_DB_API_ENDPOINT"]
     ASTRA_DB_APPLICATION_TOKEN = st.secrets["ASTRA_DB_APPLICATION_TOKEN"]
     ASTRA_DB_NAMESPACE = st.secrets.get("ASTRA_DB_NAMESPACE", None)
-    HUGGINGFACEHUB_API_TOKEN = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 except KeyError as e:
     st.error(f"Missing secret key: {e}")
     st.stop()
@@ -27,11 +27,11 @@ st.write("Secrets loaded:", {
     "ASTRA_DB_API_ENDPOINT": ASTRA_DB_API_ENDPOINT,
     "ASTRA_DB_APPLICATION_TOKEN": "****" if ASTRA_DB_APPLICATION_TOKEN else None,
     "ASTRA_DB_NAMESPACE": ASTRA_DB_NAMESPACE,
-    "HUGGINGFACEHUB_API_TOKEN": "****" if HUGGINGFACEHUB_API_TOKEN else None
+    "OPENAI_API_KEY": "****" if OPENAI_API_KEY else None
 })
 
 # App title
-st.title("DocVectorizer for RAG with Hugging Face Embeddings")
+st.title("DocVectorizer for RAG with OpenAI Embeddings")
 
 # Input for use case to dynamically set collection name
 use_case = st.text_input("Enter use case (e.g., technical, marketing)", value="default")
@@ -41,11 +41,12 @@ collection_name = f"rag_{use_case.lower().replace(' ', '_')}"
 supported_formats = ["pdf", "md", "txt", "json"]
 uploaded_files = st.file_uploader(f"Upload Documents ({', '.join(supported_formats)})", 
                                  type=supported_formats, 
-                                 accept_multiple_files=True)  # Fixed syntax error
+                                 accept_multiple_files=True)
 
-# Text splitter settings
-chunk_size = st.number_input("Chunk Size", min_value=100, max_value=2000, value=750, step=50)
-chunk_overlap = st.number_input("Chunk Overlap", min_value=0, max_value=500, value=150, step=10)
+# Text splitter settings (optimized for legal documents)
+chunk_size = 512
+chunk_overlap = 100
+st.write(f"Using optimized settings - Chunk Size: {chunk_size}, Chunk Overlap: {chunk_overlap}")
 
 # Helper function to generate a hash for a document
 def get_document_hash(content, filename):
@@ -113,11 +114,9 @@ if uploaded_files:
         def initialize_embeddings_with_retry(max_retries=3, delay=5):
             for attempt in range(max_retries):
                 try:
-                    embeddings = HuggingFaceHubEmbeddings(
-                        model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-                        huggingfacehub_api_token=HUGGINGFACEHUB_API_TOKEN,
-                        endpoint_url="https://api-inference.huggingface.co/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-                        task="feature-extraction"
+                    embeddings = OpenAIEmbeddings(
+                        model="text-embedding-3-large",
+                        openai_api_key=OPENAI_API_KEY
                     )
                     return embeddings
                 except HTTPError as e:
@@ -126,9 +125,9 @@ if uploaded_files:
                         st.warning(f"503 error on attempt {attempt + 1}, retrying in {delay} seconds...")
                         time.sleep(delay)
                     elif error_code == 401:
-                        raise Exception("Invalid or unauthorized HUGGINGFACEHUB_API_TOKEN. Please check your token.")
+                        raise Exception("Invalid or unauthorized OPENAI_API_KEY. Please check your key.")
                     elif error_code == 429:
-                        raise Exception("Rate limit exceeded for Hugging Face Inference API.")
+                        raise Exception("Rate limit exceeded for OpenAI API.")
                     else:
                         raise e
             raise Exception("Max retries reached for initializing embeddings")
@@ -139,13 +138,13 @@ if uploaded_files:
         actual_dimension = len(sample_embedding)
         st.info(f"Embedding model dimension: {actual_dimension}")
         
-        # Define expected dimension
-        EMBEDDING_DIMENSION = 384  # Known for paraphrase-multilingual-MiniLM-L12-v2
+        # Define expected dimension for text-embedding-3-large
+        EMBEDDING_DIMENSION = 3072
         if actual_dimension != EMBEDDING_DIMENSION:
             st.warning(f"Warning: Embedding dimension ({actual_dimension}) does not match expected dimension ({EMBEDDING_DIMENSION})")
     
     except Exception as e:
-        st.error(f"Failed to initialize HuggingFaceHubEmbeddings: {str(e)}")
+        st.error(f"Failed to initialize OpenAIEmbeddings: {str(e)}")
         st.stop()
     
     # Create or access vector store
