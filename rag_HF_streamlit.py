@@ -56,8 +56,8 @@ def get_document_hash(content, filename):
 # Helper function to check if a document already exists
 def document_exists(doc_hash, vectorstore):
     try:
-        # Use a direct query to check for existence of doc_hash in metadata
-        results = vectorstore.astra_db.collection(collection_name).find(
+        # Use the internal _astra_db_collection to check for existence of doc_hash in metadata
+        results = vectorstore._astra_db_collection.find(
             {"metadata.doc_hash": doc_hash},
             limit=1
         )
@@ -241,8 +241,8 @@ if uploaded_files:
                 progress_bar.progress(progress)
                 status_text.text(f"Processing batch {i//batch_size + 1}/{(total_chunks-1)//batch_size + 1} ({end_idx}/{total_chunks} chunks)")
             
-            # Verify the number of records in the database
-            total_records = vectorstore.astra_db.collection(collection_name).count_documents({})
+            # Verify the number of records in the database using _astra_db_collection
+            total_records = vectorstore._astra_db_collection.count_documents({})
             st.success(f"Documents successfully vectorized and stored in collection {collection_name}. Total records in DB: {total_records}")
             
         except Exception as e:
