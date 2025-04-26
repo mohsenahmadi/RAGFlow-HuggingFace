@@ -56,13 +56,16 @@ def get_document_hash(content, filename):
 # Helper function to check if a document already exists
 def document_exists(doc_hash, vectorstore):
     try:
-        results = vectorstore.similarity_search(
-            "check_duplicate_placeholder",
-            k=1,
-            filter={"doc_hash": doc_hash}
+        # Use a direct query to check for existence of doc_hash in metadata
+        results = vectorstore.astra_db.collection(collection_name).find(
+            {"metadata.doc_hash": doc_hash},
+            limit=1
         )
-        return len(results) > 0
-    except Exception:
+        exists = len(list(results)) > 0
+        st.write(f"Checking duplicate for doc_hash {doc_hash}: {'Exists' if exists else 'Not found'}")
+        return exists
+    except Exception as e:
+        st.warning(f"Error checking duplicate for doc_hash {doc_hash}: {str(e)}")
         return False
 
 # Helper function to load and process different file types
@@ -103,6 +106,7 @@ def load_document(file_path, file_name, file_type):
                 "file_type": file_type,
                 "doc_hash": doc_hash
             })
+        st.write(f"Loaded {len(docs)} documents from {file_name}")
         return docs
     except Exception as e:
         st.error(f"Error loading {file_name}: {str(e)}")
@@ -209,6 +213,7 @@ if uploaded_files:
     if documents:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         chunks = text_splitter.split_documents(documents)
+        st.write(f"Total chunks created: {len(chunks)}")
         
         try:
             batch_size = 10
@@ -222,17 +227,23 @@ if uploaded_files:
                 
                 filtered_batch = []
                 for doc in current_batch:
-                    if not document_exists(doc.metadata.get("doc_hash", ""), vectorstore):
+                    doc_hash = doc.metadata.get("doc_hash", "")
+                    if not document_exists(doc_hash, vectorstore):
                         filtered_batch.append(doc)
+                    else:
+                        st.info(f"Chunk with doc_hash {doc_hash} already exists, skipping...")
                 
                 if filtered_batch:
                     vectorstore.add_documents(filtered_batch)
+                    st.write(f"Stored {len(filtered_batch)} chunks in batch {i//batch_size + 1}")
                 
                 progress = (end_idx / total_chunks)
                 progress_bar.progress(progress)
                 status_text.text(f"Processing batch {i//batch_size + 1}/{(total_chunks-1)//batch_size + 1} ({end_idx}/{total_chunks} chunks)")
             
-            st.success(f"Documents successfully vectorized and stored in collection {collection_name}")
+            # Verify the number of records in the database
+            total_records = vectorstore.astra_db.collection(collection_name).count_documents({})
+            st.success(f"Documents successfully vectorized and stored in collection {collection_name}. Total records in DB: {total_records}")
             
         except Exception as e:
             st.error(f"Failed to store documents in AstraDB: {str(e)}")
